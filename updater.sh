@@ -32,15 +32,15 @@ get_current_rules() {
 	ufw status numbered | grep "DENY.*RUGOV blacklist" | sed 's/.*DENY.*from \([^ ]*\).*/\1/' | sort || true
 }
 
-# Function to add ufw rule
+# Function to add ufw rule (only if it doesn't exist)
 add_ufw_rule() {
 	local ip="$1"
-	if [[ "$FMT_LOGS" ]]; then
-		# For logging, we'll use ufw's built-in logging
-		ufw deny from "$ip" comment "RUGOV blacklist - $(date)"
-	else
-		ufw deny from "$ip" comment "RUGOV blacklist"
+	# Check if rule already exists
+	if ufw status numbered | grep -q "DENY.*from $ip.*RUGOV blacklist"; then
+		return 0
 	fi
+	# Add new rule with consistent comment (no date to avoid updates)
+	ufw deny from "$ip" comment "RUGOV blacklist"
 	return 0
 }
 
