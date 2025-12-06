@@ -45,14 +45,16 @@ add_ufw_rule() {
 	local escaped_ip
 	escaped_ip=$(escape_ip_for_regex "$ip")
 	# Check if rule already exists (escape IP for grep to handle special characters)
-	if ufw status numbered 2>/dev/null | grep -q "DENY.*from $escaped_ip.*RUGOV blacklist"; then
+	# Use -E for extended regex to properly handle escaped characters
+	if ufw status numbered 2>/dev/null | grep -Eq "DENY.*from $escaped_ip.*RUGOV blacklist"; then
 		return 0
 	fi
 	# Add new rule with consistent comment (no date to avoid updates)
 	# Suppress errors if rule already exists (ufw may return error for duplicates)
 	if ! ufw deny from "$ip" comment "RUGOV blacklist" 2>/dev/null; then
 		# If ufw returns error, check again - rule might have been added
-		if ufw status numbered 2>/dev/null | grep -q "DENY.*from $escaped_ip.*RUGOV blacklist"; then
+		# Use -E for extended regex to properly handle escaped characters
+		if ufw status numbered 2>/dev/null | grep -Eq "DENY.*from $escaped_ip.*RUGOV blacklist"; then
 			return 0
 		fi
 		# If rule still doesn't exist, there was a real error
@@ -67,7 +69,8 @@ remove_ufw_rule_by_ip() {
 	local escaped_ip
 	escaped_ip=$(escape_ip_for_regex "$ip")
 	# Find the rule number for this IP (escape IP to prevent regex matching issues)
-	local rule_num=$(ufw status numbered 2>/dev/null | grep "DENY.*from $escaped_ip.*RUGOV blacklist" | head -1 | sed 's/\[\([0-9]*\)\].*/\1/' || true)
+	# Use -E for extended regex to properly handle escaped characters
+	local rule_num=$(ufw status numbered 2>/dev/null | grep -E "DENY.*from $escaped_ip.*RUGOV blacklist" | head -1 | sed 's/\[\([0-9]*\)\].*/\1/' || true)
 	if [[ -n "$rule_num" ]]; then
 		# Suppress errors if rule was already deleted
 		ufw --force delete "$rule_num" 2>/dev/null || true
