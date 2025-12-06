@@ -29,18 +29,26 @@ removed=0
 
 # Function to get current ufw rules for RUGOV blacklist
 get_current_rules() {
-	ufw status numbered | grep "DENY.*RUGOV blacklist" | sed 's/.*DENY.*from \([^ ]*\).*/\1/' | sort || true
+	ufw status numbered 2>/dev/null | grep "DENY.*RUGOV blacklist" | sed 's/.*DENY.*from \([^ ]*\).*/\1/' | sort || true
 }
 
 # Function to add ufw rule (only if it doesn't exist)
 add_ufw_rule() {
 	local ip="$1"
-	# Check if rule already exists
-	if ufw status numbered | grep -q "DENY.*from $ip.*RUGOV blacklist"; then
+	# Check if rule already exists (escape IP for grep to handle special characters)
+	if ufw status numbered 2>/dev/null | grep -q "DENY.*from $ip.*RUGOV blacklist"; then
 		return 0
 	fi
 	# Add new rule with consistent comment (no date to avoid updates)
-	ufw deny from "$ip" comment "RUGOV blacklist"
+	# Suppress errors if rule already exists (ufw may return error for duplicates)
+	if ! ufw deny from "$ip" comment "RUGOV blacklist" 2>/dev/null; then
+		# If ufw returns error, check again - rule might have been added
+		if ufw status numbered 2>/dev/null | grep -q "DENY.*from $ip.*RUGOV blacklist"; then
+			return 0
+		fi
+		# If rule still doesn't exist, there was a real error
+		return 1
+	fi
 	return 0
 }
 
@@ -48,9 +56,10 @@ add_ufw_rule() {
 remove_ufw_rule_by_ip() {
 	local ip="$1"
 	# Find the rule number for this IP
-	local rule_num=$(ufw status numbered | grep "DENY.*from $ip.*RUGOV blacklist" | head -1 | sed 's/\[\([0-9]*\)\].*/\1/' || true)
+	local rule_num=$(ufw status numbered 2>/dev/null | grep "DENY.*from $ip.*RUGOV blacklist" | head -1 | sed 's/\[\([0-9]*\)\].*/\1/' || true)
 	if [[ -n "$rule_num" ]]; then
-		ufw --force delete "$rule_num"
+		# Suppress errors if rule was already deleted
+		ufw --force delete "$rule_num" 2>/dev/null || true
 		return 0
 	fi
 	return 1
@@ -65,8 +74,9 @@ done < <(get_current_rules)
 # Find addresses to add (in new list but not in current rules)
 for addr in "${new_addresses[@]}"; do
 	if ! printf '%s\n' "${current_rules[@]}" | grep -q "^$addr$"; then
-		add_ufw_rule "$addr"
-		((added++)) || true
+		if add_ufw_rule "$addr"; then
+			((added++)) || true
+		fi
 	fi
 done
 
