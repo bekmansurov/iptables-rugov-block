@@ -1,4 +1,4 @@
-# Keep your webserver clean from RKN bots using iptables.
+# Keep your webserver clean from RKN bots using ufw.
 
 This project uses blacklists from https://github.com/C24Be/AS_Network_List/blob/main/blacklists/blacklist.txt
 
@@ -8,16 +8,23 @@ You can find all the original instructions from the author of this solution here
 
 ## How to use
 
-First, check that you have all necessary packages: `sudo apt-get install iptables-persistent` and `sudo apt-get install rsyslog` if you want to keep logs.
+First, check that you have all necessary packages: `sudo apt-get install ufw` and `sudo apt-get install rsyslog` if you want to keep logs.
 Clone this repo to your server and run `sudo ./install.sh`
 To enable logging of all requests from forbidden ips run `sudo ./install.sh --log` instead. This requires rsyslogd to be up and running. If you are unsure - install it without logs.
 All the logs are in the file /var/log/rugov_blacklist/blacklist.log . Keep in mind - if your target could be interesting, you can get a lot of disk space used by this log!
 
 ## What it does
 
-- adds rsyslogd rules in /etc/rsyslog.d/51-iptables-rugov.conf (only with --log)
+- adds rsyslogd rules in /etc/rsyslog.d/51-ufw-rugov.conf (only with --log)
 - makes directory /var/log/rugov_blacklist/
 - puts there all necessary files
 - runs the update process 
 - installs cron script to /etc/cron.daily/rugov_updater
+
+## Important Notes
+
+- Make sure ufw is enabled: `sudo ufw enable`
+- The script will automatically add DENY rules for blacklisted IPs
+- Rules are managed through ufw's numbered system for easy removal
+- IPv6 addresses are supported automatically
 

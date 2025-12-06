@@ -1,32 +1,23 @@
 #!/bin/bash
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 set -euo pipefail
 IFS=$'\n\t'
 
 # Paths to files with IP addresses
-OLD_IP_FILE="/var/log/rugov_blacklist/old_blacklist.txt"
 NEW_IP_FILE="/var/log/rugov_blacklist/blacklist.txt"
 FMT_LOGS=""
-if [[ -f "/etc/rsyslog.d/51-iptables-rugov.conf" ]]; then
+if [[ -f "/etc/rsyslog.d/51-ufw-rugov.conf" ]]; then
 	FMT_LOGS="do"
 fi
 
-# Rename the existing blacklist.txt file to old_blacklist.txt
-mv "$NEW_IP_FILE" "$OLD_IP_FILE"
-
-# Copy the blacklist.txt file from the source via the link
+# Download the new blacklist file
 if ! sudo wget -O "$NEW_IP_FILE" https://github.com/C24Be/AS_Network_List/raw/main/blacklists/blacklist.txt; then
-	echo "Failed to load new blacklist. Lets leave the old list unchanged."
-	echo "$(date +"%Y-%m-%d %H:%M:%S") - Failed to load new blacklist. Lets leave the old list unchanged." >> /var/log/rugov_blacklist/blacklist_updater.log
+	echo "Failed to load new blacklist. Exiting."
+	echo "$(date +"%Y-%m-%d %H:%M:%S") - Failed to load new blacklist. Exiting." >> /var/log/rugov_blacklist/blacklist_updater.log
 	exit 1
 fi
 
-# Read IP addresses from old file
-old_addresses=()
-while IFS= read -r ip || [[ -n "$ip" ]]; do
-old_addresses+=("$ip")
-done < "$OLD_IP_FILE"
-
-# Read IP addresses from a new file
+# Read IP addresses from the new file
 new_addresses=()
 while IFS= read -r ip || [[ -n "$ip" ]]; do
 new_addresses+=("$ip")
@@ -35,38 +26,58 @@ done < "$NEW_IP_FILE"
 # Add new addresses and remove old ones from the rules
 added=0
 removed=0
-for addr in "${new_addresses[@]}"; do
-	if [[ $(echo "$addr" | grep -c ":") -ge 1 ]]; then
-		FMT_IPCMD="ip6tables"
-	else
-		FMT_IPCMD="iptables"
-	fi
 
-	if ! sudo "$FMT_IPCMD" -n -t raw -C PREROUTING -s "$addr" -j DROP &>/dev/null; then
-		if [[ "$FMT_LOGS" ]]; then
-			"$FMT_IPCMD" -t raw -A PREROUTING -s "$addr" -j LOG --log-prefix "Blocked RUGOV IP attempt: "
-		fi
-		"$FMT_IPCMD" -t raw -A PREROUTING -s "$addr" -j DROP
+# Function to get current ufw rules for RUGOV blacklist
+get_current_rules() {
+	ufw status numbered | grep "DENY.*RUGOV blacklist" | sed 's/.*DENY.*from \([^ ]*\).*/\1/' | sort || true
+}
+
+# Function to add ufw rule
+add_ufw_rule() {
+	local ip="$1"
+	if [[ "$FMT_LOGS" ]]; then
+		# For logging, we'll use ufw's built-in logging
+		ufw deny from "$ip" comment "RUGOV blacklist - $(date)"
+	else
+		ufw deny from "$ip" comment "RUGOV blacklist"
+	fi
+	return 0
+}
+
+# Function to remove ufw rule by IP
+remove_ufw_rule_by_ip() {
+	local ip="$1"
+	# Find the rule number for this IP
+	local rule_num=$(ufw status numbered | grep "DENY.*from $ip.*RUGOV blacklist" | head -1 | sed 's/\[\([0-9]*\)\].*/\1/' || true)
+	if [[ -n "$rule_num" ]]; then
+		ufw --force delete "$rule_num"
+		return 0
+	fi
+	return 1
+}
+
+# Get current rules from ufw
+current_rules=()
+while IFS= read -r rule || [[ -n "$rule" ]]; do
+	current_rules+=("$rule")
+done < <(get_current_rules)
+
+# Find addresses to add (in new list but not in current rules)
+for addr in "${new_addresses[@]}"; do
+	if ! printf '%s\n' "${current_rules[@]}" | grep -q "^$addr$"; then
+		add_ufw_rule "$addr"
 		((added++)) || true
 	fi
 done
 
-for addr in "${old_addresses[@]}"; do
-	if [[ $(echo "$addr" | grep -c ":") -ge 1 ]]; then
-		FMT_IPCMD="ip6tables"
-	else
-		FMT_IPCMD="iptables"
-	fi
-
-	if ! grep -q "$addr" "$NEW_IP_FILE"; then
-		"$FMT_IPCMD" -t raw -D PREROUTING -s "$addr" -j LOG --log-prefix "Blocked RUGOV IP attempt: " || true
-		"$FMT_IPCMD" -t raw -D PREROUTING -s "$addr" -j DROP
-		((removed++)) || true
+# Find addresses to remove (in current rules but not in new list)
+for addr in "${current_rules[@]}"; do
+	if ! printf '%s\n' "${new_addresses[@]}" | grep -q "^$addr$"; then
+		if remove_ufw_rule_by_ip "$addr"; then
+			((removed++)) || true
+		fi
 	fi
 done
-
-# Save firewall rules to a file
-iptables-save > /etc/iptables/rules.v4
 
 # Display information about added and deleted addresses
 echo "Added addresses to the blacklist: $added"

@@ -15,8 +15,8 @@ if [[ "$FMTCURID" != "0" ]]; then
 	exit 1
 fi
 
-if [[ ! -d "/etc/iptables/" ]]; then
-	echo "The script is intended to be used with iptables. Are you sure all the necessary packages are installed? Run: 'sudo apt-get install iptables-persistent'"
+if ! command -v ufw &> /dev/null; then
+	echo "The script is intended to be used with ufw. Are you sure all the necessary packages are installed? Run: 'sudo apt-get install ufw'"
 	exit 2
 fi
 
@@ -27,7 +27,7 @@ if [[ "$FMTDOLOGS" ]]; then
 		exit 1
 	fi
 
-	cat "$FMTDIR/51-iptables-rugov.conf" > /etc/rsyslog.d/51-iptables-rugov.conf
+	cat "$FMTDIR/51-ufw-rugov.conf" > /etc/rsyslog.d/51-ufw-rugov.conf
 
 	service rsyslog restart
 fi
