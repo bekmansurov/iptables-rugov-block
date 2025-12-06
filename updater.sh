@@ -72,9 +72,20 @@ remove_ufw_rule_by_ip() {
 	# Use -E for extended regex to properly handle escaped characters
 	local rule_num=$(ufw status numbered 2>/dev/null | grep -E "DENY.*from $escaped_ip.*RUGOV blacklist" | head -1 | sed 's/\[\([0-9]*\)\].*/\1/' || true)
 	if [[ -n "$rule_num" ]]; then
-		# Suppress errors if rule was already deleted
-		ufw --force delete "$rule_num" 2>/dev/null || true
-		return 0
+		# Try to delete the rule and check if it succeeds
+		# Suppress stderr but capture exit code
+		if ufw --force delete "$rule_num" 2>/dev/null; then
+			return 0
+		else
+			# Deletion failed, but rule might have been deleted by another process
+			# Check if rule still exists
+			if ! ufw status numbered 2>/dev/null | grep -Eq "\[$rule_num\].*DENY.*from $escaped_ip.*RUGOV blacklist"; then
+				# Rule no longer exists, consider deletion successful
+				return 0
+			fi
+			# Rule still exists and deletion failed
+			return 1
+		fi
 	fi
 	return 1
 }
