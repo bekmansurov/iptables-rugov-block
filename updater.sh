@@ -27,6 +27,13 @@ done < "$NEW_IP_FILE"
 added=0
 removed=0
 
+# Function to escape IP address for use in regex patterns
+escape_ip_for_regex() {
+	local ip="$1"
+	# Escape dots for IPv4 and other regex special characters
+	printf '%s' "$ip" | sed 's/\./\\./g; s/\[/\\[/g; s/\]/\\]/g; s/(/\\(/g; s/)/\\)/g; s/{/\\{/g; s/}/\\}/g; s/\*/\\*/g; s/+/\\+/g; s/?/\\?/g; s/^/\\^/g; s/$/\\$/g; s/|/\\|/g'
+}
+
 # Function to get current ufw rules for RUGOV blacklist
 get_current_rules() {
 	ufw status numbered 2>/dev/null | grep "DENY.*RUGOV blacklist" | sed 's/.*DENY.*from \([^ ]*\).*/\1/' | sort || true
@@ -35,15 +42,17 @@ get_current_rules() {
 # Function to add ufw rule (only if it doesn't exist)
 add_ufw_rule() {
 	local ip="$1"
+	local escaped_ip
+	escaped_ip=$(escape_ip_for_regex "$ip")
 	# Check if rule already exists (escape IP for grep to handle special characters)
-	if ufw status numbered 2>/dev/null | grep -q "DENY.*from $ip.*RUGOV blacklist"; then
+	if ufw status numbered 2>/dev/null | grep -q "DENY.*from $escaped_ip.*RUGOV blacklist"; then
 		return 0
 	fi
 	# Add new rule with consistent comment (no date to avoid updates)
 	# Suppress errors if rule already exists (ufw may return error for duplicates)
 	if ! ufw deny from "$ip" comment "RUGOV blacklist" 2>/dev/null; then
 		# If ufw returns error, check again - rule might have been added
-		if ufw status numbered 2>/dev/null | grep -q "DENY.*from $ip.*RUGOV blacklist"; then
+		if ufw status numbered 2>/dev/null | grep -q "DENY.*from $escaped_ip.*RUGOV blacklist"; then
 			return 0
 		fi
 		# If rule still doesn't exist, there was a real error
@@ -55,8 +64,10 @@ add_ufw_rule() {
 # Function to remove ufw rule by IP
 remove_ufw_rule_by_ip() {
 	local ip="$1"
-	# Find the rule number for this IP
-	local rule_num=$(ufw status numbered 2>/dev/null | grep "DENY.*from $ip.*RUGOV blacklist" | head -1 | sed 's/\[\([0-9]*\)\].*/\1/' || true)
+	local escaped_ip
+	escaped_ip=$(escape_ip_for_regex "$ip")
+	# Find the rule number for this IP (escape IP to prevent regex matching issues)
+	local rule_num=$(ufw status numbered 2>/dev/null | grep "DENY.*from $escaped_ip.*RUGOV blacklist" | head -1 | sed 's/\[\([0-9]*\)\].*/\1/' || true)
 	if [[ -n "$rule_num" ]]; then
 		# Suppress errors if rule was already deleted
 		ufw --force delete "$rule_num" 2>/dev/null || true
@@ -73,7 +84,8 @@ done < <(get_current_rules)
 
 # Find addresses to add (in new list but not in current rules)
 for addr in "${new_addresses[@]}"; do
-	if ! printf '%s\n' "${current_rules[@]}" | grep -q "^$addr$"; then
+	# Use -F for fixed string matching to avoid regex issues with IP addresses
+	if ! printf '%s\n' "${current_rules[@]}" | grep -Fxq "$addr"; then
 		if add_ufw_rule "$addr"; then
 			((added++)) || true
 		fi
@@ -82,7 +94,8 @@ done
 
 # Find addresses to remove (in current rules but not in new list)
 for addr in "${current_rules[@]}"; do
-	if ! printf '%s\n' "${new_addresses[@]}" | grep -q "^$addr$"; then
+	# Use -F for fixed string matching to avoid regex issues with IP addresses
+	if ! printf '%s\n' "${new_addresses[@]}" | grep -Fxq "$addr"; then
 		if remove_ufw_rule_by_ip "$addr"; then
 			((removed++)) || true
 		fi
